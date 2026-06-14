@@ -7,11 +7,13 @@ cd "$ROOT"
 APP="$ROOT/dist/DeskCat.app"
 DMG="$ROOT/dist/DeskCat.dmg"
 IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: ESRA BEYAZ (5S5NZJ7SKF)}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+RELEASE_BINARY="$ROOT/.build/apple/Products/Release/DeskCat"
 
-swift build -c release
+swift build -c release --arch arm64 --arch x86_64
 rm -rf "$APP" "$ROOT/dist/DesktopPet.app" "$ROOT/dist/DesktopPet.dmg" "$ROOT/dist/dmg"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$ROOT/.build/release/DeskCat" "$APP/Contents/MacOS/DeskCat"
+cp "$RELEASE_BINARY" "$APP/Contents/MacOS/DeskCat"
 cp "$ROOT/Assets/DeskCat.icns" "$APP/Contents/Resources/DeskCat.icns"
 cp "$ROOT/Assets/deskcat-agent-event.sh" "$APP/Contents/Resources/deskcat-agent-event.sh"
 chmod +x "$APP/Contents/Resources/deskcat-agent-event.sh"
@@ -46,3 +48,13 @@ rm -rf "$ROOT/dist/dmg"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 codesign --verify --verbose=2 "$DMG"
 hdiutil verify "$DMG"
+
+if [[ -n "$NOTARY_PROFILE" ]]; then
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  xcrun stapler validate "$DMG"
+  spctl -a -vvv -t open --context context:primary-signature "$DMG"
+else
+  print "Created signed universal DMG: $DMG"
+  print "Notarization skipped. Set NOTARY_PROFILE to distribute without Gatekeeper warnings."
+fi

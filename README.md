@@ -58,6 +58,24 @@ swift run -c release
 ./Scripts/package-dmg.sh
 ```
 
+Betik Apple Silicon ve Intel Mac'ler için universal binary üretir. Başka
+Mac'lerde Gatekeeper uyarısı olmadan dağıtmak için notarization kimlik
+bilgilerini bir kez Keychain'e kaydet:
+
+```bash
+xcrun notarytool store-credentials DeskCatNotary \
+  --apple-id "APPLE_ID_EPOSTAN" \
+  --team-id "5S5NZJ7SKF"
+```
+
+Komut parola istediğinde Apple hesabının normal parolası yerine
+[uygulamaya özel parola](https://appleid.apple.com/) kullan. Ardından imzalama,
+notarization ve ticket stapling işlemlerini tek komutla çalıştır:
+
+```bash
+NOTARY_PROFILE=DeskCatNotary ./Scripts/package-dmg.sh
+```
+
 ## Ne yapıyor?
 
 | Durum | Tetikleyici |
