@@ -83,7 +83,5 @@ struct CatModel {
     var tailPullX: CGFloat = 0
     var tailPullY: CGFloat = 0
     var scrollAmount: CGFloat = 0
-    var bubbleText: String?
-    var timerText: String?
     var palette: Palette = Palettes.orange
 }

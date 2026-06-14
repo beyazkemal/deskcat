@@ -11,9 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PetPanel!
     private var settingsWindow: NSWindow?
     private var ticker: Timer?
+    private var scheduledTickInterval: TimeInterval?
     private var keyEventTap: CFMachPort?
     private var keyEventTapSource: CFRunLoopSource?
     private var keyboardPermissionTimer: Timer?
+    private var screenObserver: Any?
 
     private var settingsObserver: AnyCancellable?
 
@@ -34,8 +36,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.attach(panel: panel)
         engine.configure(settings: settings)
         engine.onPresentationChange = { [weak self] in self?.rebuildMenu() }
+        engine.onSchedulingChange = { [weak self] in self?.wakeTicker() }
         settingsObserver = settings.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.rebuildMenu() }
+        }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.engine.refreshScreenGeometry()
         }
 
         // menu-bar item
@@ -48,14 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         rebuildMenu()
 
-        // 60fps driver (common mode so it keeps running during menu tracking)
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.engine.tick()
-        }
-        RunLoop.main.add(t, forMode: .common)
-        ticker = t
+        scheduleNextTick(after: 0)
 
         startKeyboardReactions()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
     }
 
     // MARK: - keyboard reactions
@@ -152,6 +163,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    // MARK: - adaptive animation driver
+
+    private func scheduleNextTick(after interval: TimeInterval) {
+        ticker?.invalidate()
+        ticker = nil
+        scheduledTickInterval = nil
+        guard engine.visible else { return }
+
+        let timer = Timer(timeInterval: max(0.001, interval), repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.ticker = nil
+            self.scheduledTickInterval = nil
+            self.engine.tick()
+            self.scheduleNextTick(after: self.engine.preferredFrameInterval)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
+        scheduledTickInterval = interval
+    }
+
+    private func wakeTicker() {
+        guard engine.visible else {
+            ticker?.invalidate()
+            ticker = nil
+            scheduledTickInterval = nil
+            return
+        }
+        // Wake immediately from the 4 FPS sleep cadence, but do not let a
+        // burst of key/scroll events bypass the active 15 FPS frame cap.
+        guard ticker == nil || (scheduledTickInterval ?? 1) > 1.0 / 12.0 else { return }
+        scheduleNextTick(after: 0)
+    }
 
     // MARK: - menu
 

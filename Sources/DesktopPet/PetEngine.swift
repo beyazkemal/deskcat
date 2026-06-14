@@ -12,11 +12,15 @@ enum Layout {
 
 final class PetEngine: ObservableObject {
 
+    let objectWillChange = ObservableObjectPublisher()
     weak var panel: NSPanel?
     var onPresentationChange: (() -> Void)?
+    var onSchedulingChange: (() -> Void)?
     var model = CatModel()
     var palette = Palettes.orange
     var visible = true
+    private(set) var bubbleText: String?
+    private(set) var timerText: String?
     private var settings: AppSettings?
 
     // feet anchor in screen coordinates (AppKit: origin bottom-left, y up)
@@ -27,6 +31,12 @@ final class PetEngine: ObservableObject {
     private var curX: CGFloat = 0, curY: CGFloat = 0
     private var lastCurX: CGFloat = 0, lastCurY: CGFloat = 0
     private var lastMoveAt = Date()
+    private var lastTickAt = Date()
+    private var nextMaintenanceAt = Date()
+    private var lastPanelOrigin: NSPoint?
+    private var lastIgnoresMouseEvents: Bool?
+    private var cachedScreens: [NSScreen] = []
+    private var cachedDesktopFrame: CGRect?
 
     // interaction
     private var dragging = false
@@ -73,15 +83,30 @@ final class PetEngine: ObservableObject {
     private var zzz: [Effect] = []
     private var steam: [Effect] = []
 
+    #if DEBUG
+    private var debugTickCount = 0
+    private var debugRenderCount = 0
+    private var debugWindowStart = Date()
+    #endif
+
     // MARK: - setup
 
     func attach(panel: NSPanel) {
         self.panel = panel
+        refreshScreenGeometry()
         if let s = NSScreen.main?.frame {
             posX = s.maxX - 150
             posY = s.minY + 90
         }
         placePanel()
+    }
+
+    func refreshScreenGeometry() {
+        cachedScreens = NSScreen.screens
+        cachedDesktopFrame = cachedScreens.map(\.frame).reduce(nil) { partial, frame in
+            partial?.union(frame) ?? frame
+        }
+        onSchedulingChange?()
     }
 
     func configure(settings: AppSettings) {
@@ -95,15 +120,20 @@ final class PetEngine: ObservableObject {
     func setVisible(_ v: Bool) {
         visible = v
         if v { panel?.orderFrontRegardless() } else { panel?.orderOut(nil) }
+        onSchedulingChange?()
     }
 
     func callOver() {
         if let s = screen(containing: CGPoint(x: curX, y: curY))?.visibleFrame {
             walkTargetX = min(max(curX, s.minX + 70), s.maxX - 70)
+            onSchedulingChange?()
         }
     }
 
-    func triggerStretch() { stretchUntil = Date().addingTimeInterval(4.2) }
+    func triggerStretch() {
+        stretchUntil = Date().addingTimeInterval(4.2)
+        onSchedulingChange?()
+    }
 
     /// Called once per key press. We never read *which* key — only that one
     /// happened — so nothing typed is ever inspected, logged, or stored.
@@ -114,6 +144,7 @@ final class PetEngine: ObservableObject {
         heat = min(1, heat + 0.12)
         if pawSide { pawTapL = 1 } else { pawTapR = 1 }
         pawSide.toggle()
+        onSchedulingChange?()
     }
 
     func registerScroll(delta: CGFloat) {
@@ -125,6 +156,7 @@ final class PetEngine: ObservableObject {
         lastScrollAt = now
         scrollUntil = now.addingTimeInterval(0.7)
         scrollAmount = clampF(scrollAmount + abs(delta) * 0.055, 0.15, 1)
+        onSchedulingChange?()
     }
 
     func handleAgentEvent(source: String, event: String, session: String) {
@@ -142,6 +174,7 @@ final class PetEngine: ObservableObject {
         default:
             break
         }
+        onSchedulingChange?()
     }
 
     func togglePomodoro() {
@@ -157,6 +190,7 @@ final class PetEngine: ObservableObject {
         }
         objectWillChange.send()
         onPresentationChange?()
+        onSchedulingChange?()
     }
 
     func resetPomodoro() {
@@ -166,13 +200,19 @@ final class PetEngine: ObservableObject {
         pomodoroRemaining = phaseDuration()
         objectWillChange.send()
         onPresentationChange?()
+        onSchedulingChange?()
     }
 
     var pomodoroMenuTitle: String {
         pomodoroRunning ? "Pause \(pomodoroPhase.rawValue)" : "Start \(pomodoroPhase.rawValue)"
     }
 
-    func setSkin(_ name: String) { palette = Palettes.byName(name) }
+    func setSkin(_ name: String) {
+        palette = Palettes.byName(name)
+        model.palette = palette
+        objectWillChange.send()
+        onSchedulingChange?()
+    }
 
     func setReminder(minutes: Int) {
         reminderTimer?.invalidate()
@@ -185,12 +225,27 @@ final class PetEngine: ObservableObject {
         reminderTimer = t
     }
 
-    // MARK: - per-frame step (~60fps)
+    var preferredFrameInterval: TimeInterval {
+        guard visible else { return .infinity }
+        switch model.state {
+        case .sleep, .idle:
+            return 1.0 / 4.0
+        default:
+            return 1.0 / 15.0
+        }
+    }
+
+    // MARK: - adaptive frame step
 
     func tick() {
         guard visible else { return }
         let now = Date()
-        activeAgentSessions = activeAgentSessions.filter { now.timeIntervalSince($0.value) < 30 * 60 }
+        let frameScale = clampF(CGFloat(now.timeIntervalSince(lastTickAt) * 60), 0.25, 8)
+        lastTickAt = now
+        if now >= nextMaintenanceAt {
+            activeAgentSessions = activeAgentSessions.filter { now.timeIntervalSince($0.value) < 30 * 60 }
+            nextMaintenanceAt = now.addingTimeInterval(60)
+        }
         updatePomodoro(now: now)
 
         // global cursor
@@ -238,19 +293,19 @@ final class PetEngine: ObservableObject {
         } else if state == .pet {
             tpx = 0; tpy = 0                 // relax instead of following the cursor
         }
-        pupX += (tpx - pupX) * 0.2
-        pupY += (tpy - pupY) * 0.2
+        pupX += (tpx - pupX) * smoothingAlpha(0.2, frameScale: frameScale)
+        pupY += (tpy - pupY) * smoothingAlpha(0.2, frameScale: frameScale)
         let tlean = clampF(dx * 0.01, -3, 3)
-        lean += (tlean - lean) * 0.12
+        lean += (tlean - lean) * smoothingAlpha(0.12, frameScale: frameScale)
 
         // breathe + tail
         let t = now.timeIntervalSinceReferenceDate
         model.breathe = CGFloat(sin(t / 0.7)) * 0.8
-        tailPhase += (state == .angry ? 0.2 : 0.07)
+        tailPhase += (state == .angry ? 0.2 : 0.07) * frameScale
         // keyboard cooldown
-        heat = max(0, heat - 0.006)
-        pawTapL *= 0.72
-        pawTapR *= 0.72
+        heat = max(0, heat - 0.006 * frameScale)
+        pawTapL *= pow(0.72, frameScale)
+        pawTapR *= pow(0.72, frameScale)
 
         // blink
         if blinkStart == nil && now > nextBlink {
@@ -276,14 +331,17 @@ final class PetEngine: ObservableObject {
         } else {
             bounce = 0
         }
-        squash += (sq - squash) * 0.25
-        squashX += (sqx - squashX) * 0.25
+        squash += (sq - squash) * smoothingAlpha(0.25, frameScale: frameScale)
+        squashX += (sqx - squashX) * smoothingAlpha(0.25, frameScale: frameScale)
 
         // walk toward target (call over)
         if let wt = walkTargetX {
             let d = wt - posX
             if abs(d) < 2 { posX = wt; walkTargetX = nil }
-            else { posX += clampF(d, -2.2, 2.2); bounce = abs(CGFloat(sin(t / 0.09))) * 2 }
+            else {
+                posX += clampF(d, -2.2 * frameScale, 2.2 * frameScale)
+                bounce = abs(CGFloat(sin(t / 0.09))) * 2
+            }
         }
 
         // Allow crossing display boundaries while dragging, then settle on the
@@ -300,7 +358,7 @@ final class PetEngine: ObservableObject {
             posY = clampF(posY, s.minY + 40, s.maxY - 40)
         }
 
-        stepEffects(state: state)
+        stepEffects(state: state, frameScale: frameScale)
 
         // commit animated values
         model.pupX = pupX; model.pupY = pupY; model.lean = lean
@@ -310,22 +368,30 @@ final class PetEngine: ObservableObject {
         model.pawTapL = pawTapL; model.pawTapR = pawTapR
         model.heat = heat
         model.scrollAmount = scrollAmount
-        model.timerText = pomodoroDisplayText(now: now)
-        model.bubbleText = bubbleText(for: state)
+        bubbleText = bubbleText(for: state)
+        timerText = pomodoroDisplayText(now: now)
         if pullingTail {
             model.tailPullX = clampF((curX - posX) / Layout.scale, 22, 58)
             model.tailPullY = clampF(BASEYFromCursor(), -22, 24)
         } else {
-            model.tailPullX *= 0.72
-            model.tailPullY *= 0.72
+            model.tailPullX *= pow(0.72, frameScale)
+            model.tailPullY *= pow(0.72, frameScale)
         }
         model.palette = palette
 
         // only capture the mouse while it is over the cat (or being dragged)
-        panel?.ignoresMouseEvents = !(over || overTail || dragging || pullingTail)
+        let ignoresMouseEvents = !(over || overTail || dragging || pullingTail)
+        if ignoresMouseEvents != lastIgnoresMouseEvents {
+            panel?.ignoresMouseEvents = ignoresMouseEvents
+            lastIgnoresMouseEvents = ignoresMouseEvents
+        }
 
-        placePanel()
+        placePanelIfNeeded()
         objectWillChange.send()
+
+        #if DEBUG
+        recordDebugFrame(now: now)
+        #endif
     }
 
     private func currentState(now: Date) -> PetState {
@@ -346,32 +412,36 @@ final class PetEngine: ObservableObject {
         return .look
     }
 
-    private func stepEffects(state: PetState) {
+    private func stepEffects(state: PetState, frameScale: CGFloat) {
         let feetViewY = Layout.PH - Layout.bottomMargin
-        if state == .pet && Double.random(in: 0...1) < 0.06 {
+        if state == .pet && Double.random(in: 0...1) < min(1, 0.06 * Double(frameScale)) {
             hearts.append(Effect(x: Layout.PW / 2 + CGFloat.random(in: -14...14),
                                  y: feetViewY - 130, life: 1, vy: 0.6, vx: 0,
                                  sym: Bool.random() ? "\u{2665}" : "\u{266A}"))
         }
-        if state == .sleep && Double.random(in: 0...1) < 0.02 {
+        if state == .sleep && Double.random(in: 0...1) < min(1, 0.02 * Double(frameScale)) {
             zzz.append(Effect(x: Layout.PW / 2 + 22, y: feetViewY - 120,
                               life: 1, vy: 0.4, vx: 0.25, sym: "z"))
         }
-        if state == .overheat && Double.random(in: 0...1) < 0.3 {
+        if state == .overheat && Double.random(in: 0...1) < min(1, 0.3 * Double(frameScale)) {
             steam.append(Effect(x: Layout.PW / 2 + CGFloat.random(in: -12...16),
                                 y: feetViewY - 110, life: 1, vy: 0.8,
                                 vx: CGFloat.random(in: -0.2...0.2), sym: ""))
         }
         for i in hearts.indices.reversed() {
-            hearts[i].y -= hearts[i].vy; hearts[i].life -= 0.012
+            hearts[i].y -= hearts[i].vy * frameScale; hearts[i].life -= 0.012 * frameScale
             if hearts[i].life <= 0 { hearts.remove(at: i) }
         }
         for i in zzz.indices.reversed() {
-            zzz[i].y -= zzz[i].vy; zzz[i].x += zzz[i].vx; zzz[i].life -= 0.01
+            zzz[i].y -= zzz[i].vy * frameScale
+            zzz[i].x += zzz[i].vx * frameScale
+            zzz[i].life -= 0.01 * frameScale
             if zzz[i].life <= 0 { zzz.remove(at: i) }
         }
         for i in steam.indices.reversed() {
-            steam[i].y -= steam[i].vy; steam[i].x += steam[i].vx; steam[i].life -= 0.025
+            steam[i].y -= steam[i].vy * frameScale
+            steam[i].x += steam[i].vx * frameScale
+            steam[i].life -= 0.025 * frameScale
             if steam[i].life <= 0 { steam.remove(at: i) }
         }
     }
@@ -401,21 +471,28 @@ final class PetEngine: ObservableObject {
     }
 
     private func placePanel() {
-        panel?.setFrameOrigin(NSPoint(x: posX - Layout.PW / 2, y: posY - Layout.bottomMargin))
+        let origin = NSPoint(x: posX - Layout.PW / 2, y: posY - Layout.bottomMargin)
+        panel?.setFrameOrigin(origin)
+        lastPanelOrigin = origin
+    }
+
+    private func placePanelIfNeeded() {
+        let origin = NSPoint(x: posX - Layout.PW / 2, y: posY - Layout.bottomMargin)
+        guard origin != lastPanelOrigin else { return }
+        panel?.setFrameOrigin(origin)
+        lastPanelOrigin = origin
     }
 
     private func desktopFrame() -> CGRect? {
-        NSScreen.screens.map(\.frame).reduce(nil) { partial, frame in
-            partial?.union(frame) ?? frame
-        }
+        cachedDesktopFrame
     }
 
     private func screen(containing point: CGPoint) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.contains(point) }
+        cachedScreens.first { $0.frame.contains(point) }
     }
 
     private func nearestScreen(to point: CGPoint) -> NSScreen? {
-        NSScreen.screens.min {
+        cachedScreens.min {
             distance(from: point, to: $0.frame) < distance(from: point, to: $1.frame)
         }
     }
@@ -427,6 +504,10 @@ final class PetEngine: ObservableObject {
     }
 
     private func clampF(_ v: CGFloat, _ a: CGFloat, _ b: CGFloat) -> CGFloat { max(a, min(b, v)) }
+
+    private func smoothingAlpha(_ base: CGFloat, frameScale: CGFloat) -> CGFloat {
+        1 - pow(1 - base, frameScale)
+    }
 
     private func phaseDuration() -> TimeInterval {
         let minutes = pomodoroPhase == .focus ? settings?.focusMinutes ?? 25 : settings?.breakMinutes ?? 5
@@ -467,6 +548,10 @@ final class PetEngine: ObservableObject {
     // MARK: - render (called by the SwiftUI Canvas)
 
     func render(into context: inout GraphicsContext, size: CGSize) {
+        #if DEBUG
+        debugRenderCount += 1
+        #endif
+
         CatRenderer.draw(&context, size: size, model: model)
 
         for h in hearts {
@@ -487,42 +572,17 @@ final class PetEngine: ObservableObject {
             context.fill(Path(ellipseIn: rect), with: .color(.white))
         }
         context.opacity = 1
-
-        if let text = model.bubbleText { drawBubble(&context, text: text) }
-        if let timer = model.timerText { drawTimer(&context, text: timer) }
     }
 
-    private func drawBubble(_ c: inout GraphicsContext, text: String) {
-        let styled = Text(text).font(.system(size: 12, weight: .semibold)).foregroundColor(Color(hex: "#4A3320"))
-        let resolved = c.resolve(styled)
-        let ts = resolved.measure(in: CGSize(width: 240, height: 60))
-        let pad: CGFloat = 8
-        let bw = ts.width + pad * 2
-        let bh: CGFloat = 22
-        let cx = Layout.PW / 2
-        let feetY = Layout.PH - Layout.bottomMargin
-        let by = feetY - Layout.displayH - bh - 6
-        let rect = CGRect(x: cx - bw / 2, y: by, width: bw, height: bh)
-        let path = Path(roundedRect: rect, cornerRadius: 7)
-        c.fill(path, with: .color(Color.white.opacity(0.96)))
-        c.stroke(path, with: .color(Color(hex: "#6B4423")), lineWidth: 1.5)
-        var tailP = Path()
-        tailP.move(to: CGPoint(x: cx - 4, y: by + bh - 1))
-        tailP.addLine(to: CGPoint(x: cx + 4, y: by + bh - 1))
-        tailP.addLine(to: CGPoint(x: cx, y: by + bh + 6))
-        tailP.closeSubpath()
-        c.fill(tailP, with: .color(Color.white.opacity(0.96)))
-        c.draw(resolved, at: CGPoint(x: cx, y: by + bh / 2))
+    #if DEBUG
+    private func recordDebugFrame(now: Date) {
+        debugTickCount += 1
+        let elapsed = now.timeIntervalSince(debugWindowStart)
+        guard elapsed >= 1 else { return }
+        print("[DeskCat perf] state=\(model.state.rawValue) ticks=\(debugTickCount) renders=\(debugRenderCount)")
+        debugTickCount = 0
+        debugRenderCount = 0
+        debugWindowStart = now
     }
-
-    private func drawTimer(_ c: inout GraphicsContext, text: String) {
-        let styled = Text(text).font(.system(size: 11, weight: .bold, design: .monospaced))
-            .foregroundColor(Color(hex: "#3D4650"))
-        let resolved = c.resolve(styled)
-        let rect = CGRect(x: Layout.PW / 2 - 46, y: Layout.PH - 26, width: 92, height: 20)
-        let path = Path(roundedRect: rect, cornerRadius: 8)
-        c.fill(path, with: .color(Color.white.opacity(0.95)))
-        c.stroke(path, with: .color(Color(hex: "#6B4423")), lineWidth: 1)
-        c.draw(resolved, at: CGPoint(x: rect.midX, y: rect.midY))
-    }
+    #endif
 }
