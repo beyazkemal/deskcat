@@ -1,12 +1,22 @@
 import SwiftUI
 
+enum PetState: String {
+    case idle, look, pet, sleep, drag, stretch, walk
+    case type, overheat, tailPull, angry, scroll
+    case thinking, celebrate, sad
+}
+
+enum PomodoroPhase: String {
+    case focus = "Focus"
+    case breakTime = "Break"
+}
+
 // Color from hex string ("#RRGGBB")
 extension Color {
     init(hex: String) {
         var s = hex
         if s.hasPrefix("#") { s.removeFirst() }
-        var v: UInt64 = 0
-        if let scanned = Scanner(string: s).scanHexInt64() { v = scanned }
+        let v = UInt64(s, radix: 16) ?? 0
         let r = Double((v >> 16) & 0xff) / 255.0
         let g = Double((v >> 8) & 0xff) / 255.0
         let b = Double(v & 0xff) / 255.0
@@ -56,7 +66,7 @@ enum Palettes {
 
 // Everything the renderer needs for one frame.
 struct CatModel {
-    var state: String = "idle"   // idle | look | hunt | pet | sleep | drag | stretch | walk
+    var state: PetState = .idle
     var pupX: CGFloat = 0
     var pupY: CGFloat = 0
     var lean: CGFloat = 0
@@ -70,5 +80,10 @@ struct CatModel {
     var pawTapL: CGFloat = 0   // 0..1 paw tap impulse (typing)
     var pawTapR: CGFloat = 0
     var heat: CGFloat = 0      // 0..1 overheat tint
+    var tailPullX: CGFloat = 0
+    var tailPullY: CGFloat = 0
+    var scrollAmount: CGFloat = 0
+    var bubbleText: String?
+    var timerText: String?
     var palette: Palette = Palettes.orange
 }

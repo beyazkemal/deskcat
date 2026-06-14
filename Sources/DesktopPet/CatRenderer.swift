@@ -28,13 +28,15 @@ enum CatRenderer {
         var pose = "sit"
         var eye = "open"
         switch m.state {
-        case "hunt": pose = "crouch"; eye = "wide"
-        case "pet": eye = "happy"
-        case "sleep": pose = "sleep"; eye = "sleep"
-        case "drag": eye = "dizzy"
-        case "stretch": pose = "stretch"; eye = "happy"
-        case "type": pose = "sit"; eye = "open"
-        case "overheat": pose = "sit"; eye = "strain"
+        case .pet, .celebrate: eye = "happy"
+        case .sleep: pose = "sleep"; eye = "sleep"
+        case .drag: eye = "dizzy"
+        case .stretch: pose = "stretch"; eye = "happy"
+        case .scroll: pose = "sit"; eye = "happy"
+        case .type, .thinking: pose = "sit"; eye = "open"
+        case .overheat: pose = "sit"; eye = "strain"
+        case .tailPull, .angry: pose = "sit"; eye = "angry"
+        case .sad: pose = "sit"; eye = "sad"
         default: pose = "sit"; eye = "open"
         }
 
@@ -49,11 +51,15 @@ enum CatRenderer {
         }
 
         // tail
-        let tailWave = CGFloat(sin(Double(m.tailPhase))) * (pose == "crouch" ? 7 : 5)
+        let angry = m.state == .tailPull || m.state == .angry
+        let tailWave = CGFloat(sin(Double(m.tailPhase))) * (angry ? 10 : (pose == "crouch" ? 7 : 5))
+        let tailEnd = m.state == .tailPull
+            ? CGPoint(x: CX + m.tailPullX, y: bodyCY + m.tailPullY)
+            : CGPoint(x: CX + bodyRX + 8, y: bodyCY - 10 + tailWave)
         var tail = Path()
         tail.move(to: CGPoint(x: CX + bodyRX - 2, y: bodyCY + 6))
         tail.addQuadCurve(
-            to: CGPoint(x: CX + bodyRX + 8, y: bodyCY - 10 + tailWave),
+            to: tailEnd,
             control: CGPoint(x: CX + bodyRX + 12, y: bodyCY + 2 + tailWave))
         c.stroke(tail, with: .color(P.outline), style: StrokeStyle(lineWidth: 6, lineCap: .round))
         c.stroke(tail, with: .color(P.base), style: StrokeStyle(lineWidth: 4, lineCap: .round))
@@ -71,9 +77,20 @@ enum CatRenderer {
             let footY = BASEY - (pose == "crouch" ? 2 : 0)
             el(&c, CX - bodyRX + 3, footY - 2, 5, 4, fill: P.belly, stroke: P.outline, lw: 1.2)
             el(&c, CX + bodyRX - 3, footY - 2, 5, 4, fill: P.belly, stroke: P.outline, lw: 1.2)
-            // front paws — lift on each keystroke for a "kneading" tap
-            el(&c, CX - 6, footY - m.pawTapL * 4, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
-            el(&c, CX + 6, footY - m.pawTapR * 4, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+            if m.state == .type || m.state == .overheat {
+                drawKeyboard(&c, m)
+                // Paws rest above the keyboard, then push down onto a key.
+                el(&c, CX - 6, footY - 5 + m.pawTapL * 4, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+                el(&c, CX + 6, footY - 5 + m.pawTapR * 4, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+            } else if m.state == .scroll {
+                drawToiletPaper(&c, m)
+                let pawStroke = CGFloat((sin(Double(m.tailPhase * 5.2)) + 1) * 0.5)
+                el(&c, 17, 47 + pawStroke * 6, 3.8, 3.2,
+                   fill: P.belly, stroke: P.outline, lw: 1.1)
+            } else {
+                el(&c, CX - 6, footY, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+                el(&c, CX + 6, footY, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+            }
         } else if pose == "stretch" {
             var arms = Path()
             arms.move(to: CGPoint(x: CX - 7, y: 30)); arms.addLine(to: CGPoint(x: CX - 10, y: 16))
@@ -99,6 +116,92 @@ enum CatRenderer {
             el(&c, CX + m.lean, headCY, headR, headR * 0.92, fill: red)
             c.opacity = 1
         }
+
+        if angry {
+            var mark = Path()
+            mark.move(to: CGPoint(x: CX + 20, y: 8))
+            mark.addLine(to: CGPoint(x: CX + 25, y: 4))
+            mark.move(to: CGPoint(x: CX + 20, y: 4))
+            mark.addLine(to: CGPoint(x: CX + 25, y: 8))
+            c.stroke(mark, with: .color(Color(hex: "#D83A35")),
+                     style: StrokeStyle(lineWidth: 2, lineCap: .round))
+        }
+
+        if m.state == .thinking {
+            for index in 0..<3 {
+                el(&c, CX + 18 + CGFloat(index * 5), 11 - CGFloat(index * 3),
+                   1.5 + CGFloat(index) * 0.35, 1.5 + CGFloat(index) * 0.35,
+                   fill: Color(hex: "#7C8AA0"))
+            }
+        }
+    }
+
+    private static func drawKeyboard(_ c: inout GraphicsContext, _ m: CatModel) {
+        let outline = Color(hex: "#343A40")
+        let caseColor = Color(hex: "#737D87")
+        let keyColor = Color(hex: "#E9EDF0")
+        let pressedColor = Color(hex: "#A9D5F2")
+
+        let keyboard = Path(roundedRect: CGRect(x: 12, y: 63, width: 40, height: 9), cornerRadius: 2)
+        c.fill(keyboard, with: .color(caseColor))
+        c.stroke(keyboard, with: .color(outline), lineWidth: 1)
+
+        for index in 0..<7 {
+            let x = CGFloat(16 + index * 5)
+            let isLeftKey = index == 2
+            let isRightKey = index == 4
+            let press = isLeftKey ? m.pawTapL : (isRightKey ? m.pawTapR : 0)
+            let y = CGFloat(65.5) + press * 1.2
+            let key = Path(roundedRect: CGRect(x: x - 1.8, y: y - 1.5, width: 3.6, height: 3), cornerRadius: 0.7)
+            c.fill(key, with: .color(press > 0.2 ? pressedColor : keyColor))
+            c.stroke(key, with: .color(outline.opacity(0.75)), lineWidth: 0.55)
+        }
+
+        let spacePress = max(m.pawTapL, m.pawTapR) * 0.45
+        let space = Path(roundedRect: CGRect(x: 25, y: 69 + spacePress, width: 14, height: 1.5), cornerRadius: 0.6)
+        c.fill(space, with: .color(keyColor))
+        c.stroke(space, with: .color(outline.opacity(0.75)), lineWidth: 0.45)
+    }
+
+    private static func drawToiletPaper(_ c: inout GraphicsContext, _ m: CatModel) {
+        let outline = Color(hex: "#77736D")
+        let paper = Color(hex: "#FFFDF7")
+        let shadow = Color(hex: "#E5E2DC")
+        let rollX: CGFloat = 7
+        let rollY: CGFloat = 44
+        let sheetTop = rollY + 3
+        let sheetBottom: CGFloat = 65
+
+        // The sheet stays the same length. Moving marks make it read as paper
+        // continuously feeding downward instead of stretching like elastic.
+        let sheet = Path(roundedRect: CGRect(x: 7, y: sheetTop, width: 9, height: sheetBottom - sheetTop),
+                         cornerRadius: 0.8)
+        c.fill(sheet, with: .color(paper))
+        c.stroke(sheet, with: .color(outline), lineWidth: 0.9)
+
+        let feedOffset = CGFloat(Double(m.tailPhase * 3.2).truncatingRemainder(dividingBy: 7))
+        for row in 0..<3 {
+            let y = sheetTop + 5 + CGFloat(row * 7) + feedOffset
+            guard y < sheetBottom - 1 else { continue }
+            var perforation = Path()
+            for column in 0..<3 {
+                let x = CGFloat(8.2 + Double(column) * 2.5)
+                perforation.move(to: CGPoint(x: x, y: y))
+                perforation.addLine(to: CGPoint(x: x + 1.1, y: y))
+            }
+            c.stroke(perforation, with: .color(shadow), lineWidth: 0.65)
+        }
+
+        // Compact side-facing roll, clearly beside the cat.
+        el(&c, rollX, rollY, 7, 6, fill: paper, stroke: outline, lw: 1.1)
+        el(&c, rollX, rollY, 3.8, 3.4, fill: shadow, stroke: outline, lw: 0.8)
+        el(&c, rollX, rollY, 1.6, 1.5, fill: Color(hex: "#B89B75"), stroke: outline, lw: 0.65)
+
+        let spin = Angle.radians(Double(m.tailPhase * 5.2))
+        var curl = Path()
+        curl.addArc(center: CGPoint(x: rollX, y: rollY), radius: 4.8,
+                    startAngle: spin, endAngle: spin + .degrees(115), clockwise: false)
+        c.stroke(curl, with: .color(shadow), lineWidth: 0.8)
     }
 
     private static func drawHead(_ c: inout GraphicsContext, _ P: Palette,
@@ -250,6 +353,21 @@ enum CatRenderer {
             a.addLine(to: CGPoint(x: x, y: y - 1.4))
             a.addLine(to: CGPoint(x: x + 2.4, y: y + 1.6))
             c.stroke(a, with: .color(P.outline), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            return
+        case "angry":
+            var a = Path()
+            a.move(to: CGPoint(x: x - 2.8, y: y - 2))
+            a.addLine(to: CGPoint(x: x + 2.8, y: y))
+            a.move(to: CGPoint(x: x - 2.3, y: y + 1.8))
+            a.addLine(to: CGPoint(x: x + 2.3, y: y + 1.8))
+            c.stroke(a, with: .color(P.outline), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            return
+        case "sad":
+            var a = Path()
+            a.addArc(center: CGPoint(x: x, y: y + 2), radius: 2.6,
+                     startAngle: .radians(Double.pi * 1.1),
+                     endAngle: .radians(Double.pi * 1.9), clockwise: false)
+            c.stroke(a, with: .color(P.outline), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
             return
         default:
             break
