@@ -33,6 +33,8 @@ enum CatRenderer {
         case "sleep": pose = "sleep"; eye = "sleep"
         case "drag": eye = "dizzy"
         case "stretch": pose = "stretch"; eye = "happy"
+        case "type": pose = "sit"; eye = "open"
+        case "overheat": pose = "sit"; eye = "strain"
         default: pose = "sit"; eye = "open"
         }
 
@@ -69,8 +71,9 @@ enum CatRenderer {
             let footY = BASEY - (pose == "crouch" ? 2 : 0)
             el(&c, CX - bodyRX + 3, footY - 2, 5, 4, fill: P.belly, stroke: P.outline, lw: 1.2)
             el(&c, CX + bodyRX - 3, footY - 2, 5, 4, fill: P.belly, stroke: P.outline, lw: 1.2)
-            el(&c, CX - 6, footY, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
-            el(&c, CX + 6, footY, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+            // front paws — lift on each keystroke for a "kneading" tap
+            el(&c, CX - 6, footY - m.pawTapL * 4, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+            el(&c, CX + 6, footY - m.pawTapR * 4, 4, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
         } else if pose == "stretch" {
             var arms = Path()
             arms.move(to: CGPoint(x: CX - 7, y: 30)); arms.addLine(to: CGPoint(x: CX - 10, y: 16))
@@ -87,6 +90,15 @@ enum CatRenderer {
 
         // head
         drawHead(&c, P, hx: CX + m.lean, hy: headCY, hr: headR, pose: pose, eye: eye, m: m)
+
+        // overheat flush — translucent red over body + head, grows with heat
+        if m.heat > 0.02 {
+            c.opacity = Double(min(0.55, m.heat * 0.5))
+            let red = Color(hex: "#F2563A")
+            el(&c, CX, bodyCY, bodyRX, bodyRY, fill: red)
+            el(&c, CX + m.lean, headCY, headR, headR * 0.92, fill: red)
+            c.opacity = 1
+        }
     }
 
     private static func drawHead(_ c: inout GraphicsContext, _ P: Palette,
@@ -138,22 +150,32 @@ enum CatRenderer {
         c.fill(nose, with: .color(P.pink))
 
         // mouth
-        var mouth = Path()
-        if eye == "happy" || pose == "stretch" {
-            mouth.move(to: CGPoint(x: hx - 2.5, y: muzY + 1.5))
-            mouth.addQuadCurve(to: CGPoint(x: hx + 2.5, y: muzY + 1.5),
-                               control: CGPoint(x: hx, y: muzY + 4.5))
+        if eye == "strain" {
+            // open panting mouth
+            el(&c, hx, muzY + 1.8, 1.8, 2.2, fill: Color(hex: "#7A3B3B"))
         } else {
-            mouth.move(to: CGPoint(x: hx, y: muzY - 1))
-            mouth.addLine(to: CGPoint(x: hx, y: muzY + 1.2))
-            mouth.move(to: CGPoint(x: hx, y: muzY + 1.2))
-            mouth.addQuadCurve(to: CGPoint(x: hx - 3.4, y: muzY + 1.4),
-                               control: CGPoint(x: hx - 2, y: muzY + 2.6))
-            mouth.move(to: CGPoint(x: hx, y: muzY + 1.2))
-            mouth.addQuadCurve(to: CGPoint(x: hx + 3.4, y: muzY + 1.4),
-                               control: CGPoint(x: hx + 2, y: muzY + 2.6))
+            var mouth = Path()
+            if eye == "happy" || pose == "stretch" {
+                mouth.move(to: CGPoint(x: hx - 2.5, y: muzY + 1.5))
+                mouth.addQuadCurve(to: CGPoint(x: hx + 2.5, y: muzY + 1.5),
+                                   control: CGPoint(x: hx, y: muzY + 4.5))
+            } else {
+                mouth.move(to: CGPoint(x: hx, y: muzY - 1))
+                mouth.addLine(to: CGPoint(x: hx, y: muzY + 1.2))
+                mouth.move(to: CGPoint(x: hx, y: muzY + 1.2))
+                mouth.addQuadCurve(to: CGPoint(x: hx - 3.4, y: muzY + 1.4),
+                                   control: CGPoint(x: hx - 2, y: muzY + 2.6))
+                mouth.move(to: CGPoint(x: hx, y: muzY + 1.2))
+                mouth.addQuadCurve(to: CGPoint(x: hx + 3.4, y: muzY + 1.4),
+                                   control: CGPoint(x: hx + 2, y: muzY + 2.6))
+            }
+            c.stroke(mouth, with: .color(P.outline), style: StrokeStyle(lineWidth: 1, lineCap: .round))
         }
-        c.stroke(mouth, with: .color(P.outline), style: StrokeStyle(lineWidth: 1, lineCap: .round))
+
+        // sweat drop when overheating
+        if eye == "strain" {
+            el(&c, hx + hr * 0.85, hy + 2, 1.6, 2.2, fill: Color(hex: "#8EC9F0"))
+        }
 
         // whiskers
         c.opacity = 0.55
@@ -220,6 +242,14 @@ enum CatRenderer {
             a.move(to: CGPoint(x: x - 2, y: y - 2)); a.addLine(to: CGPoint(x: x + 2, y: y + 2))
             a.move(to: CGPoint(x: x + 2, y: y - 2)); a.addLine(to: CGPoint(x: x - 2, y: y + 2))
             c.stroke(a, with: .color(P.outline), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+            return
+        case "strain":
+            // squeezed-shut "^" eyes
+            var a = Path()
+            a.move(to: CGPoint(x: x - 2.4, y: y + 1.6))
+            a.addLine(to: CGPoint(x: x, y: y - 1.4))
+            a.addLine(to: CGPoint(x: x + 2.4, y: y + 1.6))
+            c.stroke(a, with: .color(P.outline), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
             return
         default:
             break

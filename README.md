@@ -10,7 +10,25 @@ kalınca uyuklar, kaldırınca mochi gibi uzar, zamanlayıcıyla esner. Hep en �
 
 > Not: Global imleç/fare takibi `NSEvent.mouseLocation` ve
 > `NSEvent.pressedMouseButtons` ile yapılır — **erişilebilirlik / input
-> monitoring izni gerektirmez.** (Klavye tepkisi eklersen o izin gerekir.)
+> monitoring izni gerektirmez.** Klavye tepkileri ise izin ister (aşağıya bak).
+
+## ⌨️ Klavye tepkileri (izin gerekir)
+
+Yazarken kedinin patileriyle tıklaması ve hızlı yazınca aşırı ısınması için
+uygulamanın **Input Monitoring** iznine ihtiyacı var:
+
+- İlk açılışta sistem izin sorabilir. Sormazsa menü çubuğundan
+  **“Enable keyboard reactions…”** seçeneğine tıkla; bu, Sistem Ayarları →
+  Gizlilik ve Güvenlik → **Giriş İzleme (Input Monitoring)** panelini açar.
+  Oradan uygulamayı işaretle ve gerekiyorsa yeniden başlat.
+
+**Gizlilik:** Kedi yalnızca “bir tuşa basıldı” sinyalini sayar. **Hangi tuşa
+basıldığı hiçbir zaman okunmaz, kaydedilmez veya saklanmaz** (`registerKeystroke`
+olayın içeriğini görmez bile). Hız bilgisi sadece ısınma efekti için kullanılır.
+
+> ⚠️ `swift run` ile çalıştırdığında izin, derlenen binary'ye bağlanır; her
+> yeniden derlemede izni tekrar vermen gerekebilir. Kalıcı kullanım için
+> aşağıdaki gibi gerçek bir `.app` yapman önerilir.
 
 ## Gereksinim
 
@@ -41,6 +59,8 @@ swift run -c release
 | 🐾 Avlanma | Fareyi hızlı oynatınca çömelir, gözleri büyür, hamle yapar |
 | 😌 Mırlama | İmleci üstüne getirip yavaşça beklersen gözleri kapanır, kalpler/notalar uçar |
 | 😴 Uyku | Birkaç saniye hareketsiz kalınca uyuklar, "z z z" çıkar |
+| ⌨️ Tıklama | Yazarken ön patileriyle sırayla tıklar (kneading) |
+| 🥵 Aşırı ısınma | Çok hızlı yazınca kızarır, gözleri sıkılır, başından buhar çıkar |
 | 🫳 Kaldırma | Kediye tıklayıp sürükle — mochi gibi esner, sersemler |
 | 🙆 Esneme | Zamanlayıcıyla veya "Stretch now" ile ayağa kalkıp esner |
 
@@ -51,6 +71,7 @@ swift run -c release
 - **Stretch now** — hemen esnetme
 - **Stretch reminder** — Kapalı / 20 / 30 / 60 dk
 - **Fur color** — Turuncu tekir / Gri / Krem / Smokin
+- **Enable keyboard reactions…** — Input Monitoring iznini ister/açar
 - **Quit**
 
 ## Gerçek bir .app yapmak (opsiyonel)
@@ -84,9 +105,8 @@ my-pet-swift/
 
 - **Yeni hareket:** `PetEngine.currentState()` içine yeni bir durum ekle,
   `CatRenderer.drawSprite` içinde o duruma göre poz/yüz çiz.
-- **Klavye tepkisi** (yazarken pati, hızlı yazınca aşırı ısınma): global klavye
-  için `NSEvent.addGlobalMonitorForEvents(matching: .keyDown)` kullan — bu
-  **Input Monitoring** izni ister, .app olarak imzalı çalıştırman önerilir.
+- **Isınma ayarı:** Aşırı ısınma eşiği ve hızı `PetEngine` içindeki `heat`
+  artış/azalış katsayılarıyla ayarlanır (`heat + 0.12` / `heat - 0.006`).
 - **Piksel görünüm:** Şu an kedi yumuşak vektör çiziliyor. Tam "pixel art" için
   `CatRenderer.draw` içinde küçük bir offscreen'e çizip `interpolation: .none`
   ile büyütebilirsin.

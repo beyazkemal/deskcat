@@ -67,5 +67,8 @@ struct CatModel {
     var squashX: CGFloat = 1
     var bounce: CGFloat = 0
     var blush: Bool = false
+    var pawTapL: CGFloat = 0   // 0..1 paw tap impulse (typing)
+    var pawTapR: CGFloat = 0
+    var heat: CGFloat = 0      // 0..1 overheat tint
     var palette: Palette = Palettes.orange
 }

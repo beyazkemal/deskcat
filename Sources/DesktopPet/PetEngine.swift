@@ -48,10 +48,17 @@ final class PetEngine: ObservableObject {
     private var squash: CGFloat = 1, squashX: CGFloat = 1
     private var pupX: CGFloat = 0, pupY: CGFloat = 0, lean: CGFloat = 0
 
+    // keyboard reactions
+    private var typingUntil: Date?
+    private var heat: CGFloat = 0          // 0..1, rises with fast typing
+    private var pawTapL: CGFloat = 0, pawTapR: CGFloat = 0
+    private var pawSide = false
+
     // effects (view space)
     struct Effect { var x: CGFloat; var y: CGFloat; var life: CGFloat; var vy: CGFloat; var vx: CGFloat; var sym: String }
     private var hearts: [Effect] = []
     private var zzz: [Effect] = []
+    private var steam: [Effect] = []
 
     // MARK: - setup
 
@@ -78,6 +85,17 @@ final class PetEngine: ObservableObject {
     }
 
     func triggerStretch() { stretchUntil = Date().addingTimeInterval(4.2) }
+
+    /// Called once per key press. We never read *which* key — only that one
+    /// happened — so nothing typed is ever inspected, logged, or stored.
+    func registerKeystroke() {
+        guard visible else { return }
+        let now = Date()
+        typingUntil = now.addingTimeInterval(0.9)
+        heat = min(1, heat + 0.12)
+        if pawSide { pawTapL = 1 } else { pawTapR = 1 }
+        pawSide.toggle()
+    }
 
     func setSkin(_ name: String) { palette = Palettes.byName(name) }
 
@@ -129,8 +147,11 @@ final class PetEngine: ObservableObject {
         let dx = curX - posX
         let dy = curY - head.y
         let ang = atan2(Double(dy), Double(dx))
-        let tpx = CGFloat(cos(ang)) * 1.2
-        let tpy = -CGFloat(sin(ang)) * 1.4   // screen y-up -> view y-down
+        var tpx = CGFloat(cos(ang)) * 1.2
+        var tpy = -CGFloat(sin(ang)) * 1.4   // screen y-up -> view y-down
+        if state == "type" || state == "overheat" {
+            tpx = 0; tpy = 1.0               // eyes down on the keys
+        }
         pupX += (tpx - pupX) * 0.2
         pupY += (tpy - pupY) * 0.2
         let tlean = clampF(dx * 0.01, -3, 3)
@@ -140,6 +161,11 @@ final class PetEngine: ObservableObject {
         let t = now.timeIntervalSinceReferenceDate
         model.breathe = CGFloat(sin(t / 0.7)) * 0.8
         tailPhase += (state == "hunt" ? 0.2 : 0.07)
+
+        // keyboard cooldown
+        heat = max(0, heat - 0.006)
+        pawTapL *= 0.72
+        pawTapR *= 0.72
 
         // blink
         if blinkStart == nil && now > nextBlink {
@@ -195,6 +221,8 @@ final class PetEngine: ObservableObject {
         model.blink = blink; model.tailPhase = tailPhase
         model.squash = squash; model.squashX = squashX; model.bounce = bounce
         model.blush = (state == "pet")
+        model.pawTapL = pawTapL; model.pawTapR = pawTapR
+        model.heat = heat
         model.palette = palette
 
         // only capture the mouse while it is over the cat (or being dragged)
@@ -208,6 +236,8 @@ final class PetEngine: ObservableObject {
         if dragging { return "drag" }
         if let su = stretchUntil, now < su { return "stretch" }
         if walkTargetX != nil { return "walk" }
+        if heat > 0.6 { return "overheat" }
+        if let tu = typingUntil, now < tu { return "type" }
         let head = headCenterScreen()
         let dx = curX - posX
         let dy = curY - head.y
@@ -230,6 +260,11 @@ final class PetEngine: ObservableObject {
             zzz.append(Effect(x: Layout.PW / 2 + 22, y: feetViewY - 120,
                               life: 1, vy: 0.4, vx: 0.25, sym: "z"))
         }
+        if state == "overheat" && Double.random(in: 0...1) < 0.3 {
+            steam.append(Effect(x: Layout.PW / 2 + CGFloat.random(in: -12...16),
+                                y: feetViewY - 110, life: 1, vy: 0.8,
+                                vx: CGFloat.random(in: -0.2...0.2), sym: ""))
+        }
         for i in hearts.indices.reversed() {
             hearts[i].y -= hearts[i].vy; hearts[i].life -= 0.012
             if hearts[i].life <= 0 { hearts.remove(at: i) }
@@ -237,6 +272,10 @@ final class PetEngine: ObservableObject {
         for i in zzz.indices.reversed() {
             zzz[i].y -= zzz[i].vy; zzz[i].x += zzz[i].vx; zzz[i].life -= 0.01
             if zzz[i].life <= 0 { zzz.remove(at: i) }
+        }
+        for i in steam.indices.reversed() {
+            steam[i].y -= steam[i].vy; steam[i].x += steam[i].vx; steam[i].life -= 0.025
+            if steam[i].life <= 0 { steam.remove(at: i) }
         }
     }
 
@@ -274,6 +313,12 @@ final class PetEngine: ObservableObject {
             let sz = 10 + (1 - z.life) * 8
             let txt = Text("z").font(.system(size: Double(sz))).foregroundColor(Color(hex: "#7C8AA0"))
             context.draw(txt, at: CGPoint(x: z.x, y: z.y))
+        }
+        for s in steam {
+            context.opacity = max(0, Double(s.life)) * 0.5
+            let r = 3 + (1 - s.life) * 7
+            let rect = CGRect(x: s.x - r, y: s.y - r, width: r * 2, height: r * 2)
+            context.fill(Path(ellipseIn: rect), with: .color(.white))
         }
         context.opacity = 1
 

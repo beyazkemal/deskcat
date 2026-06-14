@@ -1,11 +1,13 @@
 import AppKit
 import SwiftUI
+import CoreGraphics
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let engine = PetEngine()
     private var panel: PetPanel!
     private var ticker: Timer?
+    private var keyMonitor: Any?
 
     private var reminderMinutes = 0
     private var skinName = "orange"
@@ -33,6 +35,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         RunLoop.main.add(t, forMode: .common)
         ticker = t
+
+        startKeyboardReactions()
+    }
+
+    // MARK: - keyboard reactions
+
+    private func startKeyboardReactions() {
+        // Listening to key events needs Input Monitoring permission.
+        if !CGPreflightListenEventAccess() {
+            _ = CGRequestListenEventAccess()
+        }
+        // We pass `_` — the key value is never read, only that a key happened.
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
+            self?.engine.registerKeystroke()
+        }
+    }
+
+    @objc private func enableKeyboard() {
+        if !CGRequestListenEventAccess() {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -87,6 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         fur.submenu = fsub
         menu.addItem(fur)
+
+        menu.addItem(.separator())
+        let kb = NSMenuItem(title: "Enable keyboard reactions…", action: #selector(enableKeyboard), keyEquivalent: "")
+        kb.target = self
+        menu.addItem(kb)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
