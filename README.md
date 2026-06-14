@@ -1,12 +1,13 @@
-# 🐈 Pet (SwiftUI) — native macOS masaüstü kedisi
+# 🐈 DeskCat — native macOS masaüstü kedisi
 
 comnyang tarzı masaüstü kedisinin **native Swift / SwiftUI** sürümü. Electron
 sürümüyle aynı davranışlar, ama çok daha hafif: harici bağımlılık yok, görsel
 asset yok (kedi tamamen kodla çiziliyor), açılış anında, RAM/CPU minimal.
 
-İmleci izler, fareyi hızlı oynatınca avlar, üstüne gelince mırlar, sessiz
-kalınca uyuklar, kaldırınca mochi gibi uzar, zamanlayıcıyla esner. Hep en üstte,
-şeffaf ve **odağı asla çalmadan** çalışır (nonactivating `NSPanel`).
+İmleci izler, üstüne gelince mırlar, altı saniye
+sessiz kalınca uyuklar, kaldırınca mochi gibi uzar, kuyruğunu çekince kızar ve
+zamanlayıcıyla esner. Hep en üstte, şeffaf ve **odağı asla çalmadan** çalışır
+(nonactivating `NSPanel`).
 
 > Not: Global imleç/fare takibi `NSEvent.mouseLocation` ve
 > `NSEvent.pressedMouseButtons` ile yapılır — **erişilebilirlik / input
@@ -26,9 +27,9 @@ uygulamanın **Input Monitoring** iznine ihtiyacı var:
 basıldığı hiçbir zaman okunmaz, kaydedilmez veya saklanmaz** (`registerKeystroke`
 olayın içeriğini görmez bile). Hız bilgisi sadece ısınma efekti için kullanılır.
 
-> ⚠️ `swift run` ile çalıştırdığında izin, derlenen binary'ye bağlanır; her
-> yeniden derlemede izni tekrar vermen gerekebilir. Kalıcı kullanım için
-> aşağıdaki gibi gerçek bir `.app` yapman önerilir.
+> ⚠️ `swift run` ile çalıştırılan binary ile paketlenmiş `DeskCat.app`
+> macOS açısından farklı uygulamalardır. Input Monitoring iznini klavye
+> tepkileri için kullanacağın gerçek `.app` sürümüne ver.
 
 ## Gereksinim
 
@@ -38,7 +39,7 @@ olayın içeriğini görmez bile). Hız bilgisi sadece ısınma efekti için kul
 ## Çalıştırma (en hızlı yol)
 
 ```bash
-cd /Users/kemalbeyaz/Repos/my-pet-swift
+cd /Users/kemalbeyaz/Repos/my-pet
 swift run
 ```
 
@@ -51,18 +52,27 @@ Daha akıcı çalışması için optimize derleme:
 swift run -c release
 ```
 
+İmzalı `DeskCat.app` ve `DeskCat.dmg` paketini yeniden üretmek için:
+
+```bash
+./Scripts/package-dmg.sh
+```
+
 ## Ne yapıyor?
 
 | Durum | Tetikleyici |
 |-------|-------------|
 | 👀 Takip | İmleci gözleriyle izler, başını hafifçe ona doğru eğer |
-| 🐾 Avlanma | Fareyi hızlı oynatınca çömelir, gözleri büyür, hamle yapar |
 | 😌 Mırlama | İmleci üstüne getirip yavaşça beklersen gözleri kapanır, kalpler/notalar uçar |
 | 😴 Uyku | Birkaç saniye hareketsiz kalınca uyuklar, "z z z" çıkar |
 | ⌨️ Tıklama | Yazarken ön patileriyle sırayla tıklar (kneading) |
 | 🥵 Aşırı ısınma | Çok hızlı yazınca kızarır, gözleri sıkılır, başından buhar çıkar |
+| 🧻 Tuvalet kâğıdı | Scroll yapınca patileriyle tuvalet kâğıdını aşağı doğru sarar |
+| 🤔 Agent düşünme | Codex veya Claude Code çalışırken düşünür, bitince sevinir |
 | 🫳 Kaldırma | Kediye tıklayıp sürükle — mochi gibi esner, sersemler |
+| 😾 Kuyruk çekme | Kuyruğuna tıklayıp çek — kuyruk uzar, kedi kısa süre kızar |
 | 🙆 Esneme | Zamanlayıcıyla veya "Stretch now" ile ayağa kalkıp esner |
+| 🍅 Pomodoro | Focus ve mola süresini kedinin yanında gösterir |
 
 ## Menü çubuğu
 
@@ -72,6 +82,7 @@ swift run -c release
 - **Stretch reminder** — Kapalı / 20 / 30 / 60 dk
 - **Fur color** — Turuncu tekir / Gri / Krem / Smokin
 - **Enable keyboard reactions…** — Input Monitoring iznini ister/açar
+- **Settings…** — kedi adı, görünüm, Pomodoro ve agent bağlantıları
 - **Quit**
 
 ## Gerçek bir .app yapmak (opsiyonel)
@@ -83,13 +94,13 @@ swift run -c release
    (Dock'ta görünmesin), çalıştır. `main.swift`'i silip `@main` yapısına
    geçmen gerekebilir — ya da AppDelegate'i `@NSApplicationMain` ile bağla.
 2. **Komut satırıyla bundle:** `swift build -c release` sonrası
-   `.build/release/DesktopPet` çıkan binary'yi bir `DesktopPet.app/Contents/MacOS/`
+   `.build/release/DeskCat` çıkan binary'yi bir `DeskCat.app/Contents/MacOS/`
    yapısına kopyalayıp basit bir `Info.plist` eklersen .app olur.
 
 ## Dosya yapısı
 
 ```
-my-pet-swift/
+my-pet/
 ├── Package.swift
 └── Sources/DesktopPet/
     ├── main.swift          # giriş: NSApplication (accessory) + AppDelegate
@@ -112,4 +123,3 @@ my-pet-swift/
   ile büyütebilirsin.
 - **Çoklu ekran:** Şu an ana ekranda çalışır; her `NSScreen` için ayrı panel
   açarak genişletebilirsin.
-

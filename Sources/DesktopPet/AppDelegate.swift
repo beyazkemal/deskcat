@@ -1,16 +1,30 @@
 import AppKit
 import SwiftUI
 import CoreGraphics
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
+    private let settings = AppSettings()
+    private let hooks = HookInstaller()
     private let engine = PetEngine()
     private var panel: PetPanel!
+    private var settingsWindow: NSWindow?
     private var ticker: Timer?
-    private var keyMonitor: Any?
+    private var keyEventTap: CFMachPort?
+    private var keyEventTapSource: CFRunLoopSource?
+    private var keyboardPermissionTimer: Timer?
 
-    private var reminderMinutes = 0
-    private var skinName = "orange"
+    private var settingsObserver: AnyCancellable?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // cat panel
@@ -18,10 +32,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hosting.frame = NSRect(x: 0, y: 0, width: Layout.PW, height: Layout.PH)
         panel = PetPanel.make(contentView: hosting)
         engine.attach(panel: panel)
+        engine.configure(settings: settings)
+        engine.onPresentationChange = { [weak self] in self?.rebuildMenu() }
+        settingsObserver = settings.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.rebuildMenu() }
+        }
 
         // menu-bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let img = NSImage(systemSymbolName: "cat.fill", accessibilityDescription: "Pet") {
+        if let img = NSImage(systemSymbolName: "cat.fill", accessibilityDescription: "DeskCat") {
             img.isTemplate = true
             statusItem.button?.image = img
         } else {
@@ -42,21 +61,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - keyboard reactions
 
     private func startKeyboardReactions() {
-        // Listening to key events needs Input Monitoring permission.
-        if !CGPreflightListenEventAccess() {
-            _ = CGRequestListenEventAccess()
+        stopKeyboardReactions()
+
+        guard CGPreflightListenEventAccess() else {
+            watchForKeyboardPermission()
+            rebuildMenu()
+            return
         }
-        // We pass `_` — the key value is never read, only that a key happened.
-        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
-            self?.engine.registerKeystroke()
+
+        let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.scrollWheel.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: { _, type, event, userInfo in
+                guard let userInfo else { return Unmanaged.passUnretained(event) }
+                let appDelegate = Unmanaged<AppDelegate>.fromOpaque(userInfo).takeUnretainedValue()
+
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    DispatchQueue.main.async {
+                        appDelegate.startKeyboardReactions()
+                    }
+                } else if type == .keyDown {
+                    DispatchQueue.main.async {
+                        appDelegate.engine.registerKeystroke()
+                    }
+                } else if type == .scrollWheel {
+                    let delta = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+                    DispatchQueue.main.async {
+                        appDelegate.engine.registerScroll(delta: CGFloat(delta))
+                    }
+                }
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            watchForKeyboardPermission()
+            rebuildMenu()
+            return
         }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        keyEventTap = tap
+        keyEventTapSource = source
+        rebuildMenu()
+    }
+
+    private func stopKeyboardReactions() {
+        if let source = keyEventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        if let tap = keyEventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+        keyEventTapSource = nil
+        keyEventTap = nil
+    }
+
+    private func watchForKeyboardPermission() {
+        guard keyboardPermissionTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] timer in
+            guard CGPreflightListenEventAccess() else { return }
+            timer.invalidate()
+            self?.keyboardPermissionTimer = nil
+            self?.startKeyboardReactions()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        keyboardPermissionTimer = timer
     }
 
     @objc private func enableKeyboard() {
-        if !CGRequestListenEventAccess() {
+        if CGPreflightListenEventAccess() {
+            startKeyboardReactions()
+            return
+        }
+
+        _ = CGRequestListenEventAccess()
+        if CGPreflightListenEventAccess() {
+            startKeyboardReactions()
+        } else {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
                 NSWorkspace.shared.open(url)
             }
+            watchForKeyboardPermission()
         }
     }
 
@@ -67,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        let title = NSMenuItem(title: "🐈  Pet", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: "🐈  \(settings.catName)", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
         menu.addItem(.separator())
@@ -87,38 +178,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        // reminder submenu
-        let reminder = NSMenuItem(title: "Stretch reminder", action: nil, keyEquivalent: "")
-        let rsub = NSMenu()
-        for (label, value) in [("Off", 0), ("Every 20 min", 20), ("Every 30 min", 30), ("Every 60 min", 60)] {
-            let it = NSMenuItem(title: label, action: #selector(pickReminder(_:)), keyEquivalent: "")
-            it.target = self
-            it.tag = value
-            it.state = (reminderMinutes == value) ? .on : .off
-            rsub.addItem(it)
-        }
-        reminder.submenu = rsub
-        menu.addItem(reminder)
-
-        // fur color submenu
-        let fur = NSMenuItem(title: "Fur color", action: nil, keyEquivalent: "")
-        let fsub = NSMenu()
-        for (label, name) in [("Orange tabby", "orange"), ("Gray", "gray"), ("Cream", "cream"), ("Tuxedo", "tuxedo")] {
-            let it = NSMenuItem(title: label, action: #selector(pickSkin(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = name
-            it.state = (skinName == name) ? .on : .off
-            fsub.addItem(it)
-        }
-        fur.submenu = fsub
-        menu.addItem(fur)
+        let pomodoro = NSMenuItem(title: engine.pomodoroMenuTitle, action: #selector(togglePomodoro), keyEquivalent: "")
+        pomodoro.target = self
+        menu.addItem(pomodoro)
+        let resetPomodoro = NSMenuItem(title: "Reset Pomodoro", action: #selector(resetPomodoro), keyEquivalent: "")
+        resetPomodoro.target = self
+        menu.addItem(resetPomodoro)
 
         menu.addItem(.separator())
-        let kb = NSMenuItem(title: "Enable keyboard reactions…", action: #selector(enableKeyboard), keyEquivalent: "")
+        let keyboardTitle: String
+        if !CGPreflightListenEventAccess() {
+            keyboardTitle = "Keyboard reactions: permission required…"
+        } else if keyEventTap == nil {
+            keyboardTitle = "Keyboard reactions: listener unavailable"
+        } else {
+            keyboardTitle = "Keyboard reactions: enabled"
+        }
+        let kb = NSMenuItem(title: keyboardTitle, action: #selector(enableKeyboard), keyEquivalent: "")
         kb.target = self
+        kb.state = keyEventTap == nil ? .off : .on
         menu.addItem(kb)
 
+        let testKeyboard = NSMenuItem(title: "Test keyboard animation", action: #selector(testKeyboardAnimation), keyEquivalent: "")
+        testKeyboard.target = self
+        menu.addItem(testKeyboard)
+
         menu.addItem(.separator())
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         let quit = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -132,17 +220,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func callOver() { engine.callOver() }
     @objc private func stretchNow() { engine.triggerStretch() }
-    @objc private func pickReminder(_ sender: NSMenuItem) {
-        reminderMinutes = sender.tag
-        engine.setReminder(minutes: reminderMinutes)
+    @objc private func togglePomodoro() {
+        engine.togglePomodoro()
         rebuildMenu()
     }
-    @objc private func pickSkin(_ sender: NSMenuItem) {
-        if let name = sender.representedObject as? String {
-            skinName = name
-            engine.setSkin(name)
-            rebuildMenu()
+    @objc private func resetPomodoro() {
+        engine.resetPomodoro()
+        rebuildMenu()
+    }
+    @objc private func testKeyboardAnimation() {
+        for index in 0..<12 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.09) { [weak self] in
+                self?.engine.registerKeystroke()
+            }
         }
+    }
+    @objc private func showSettings() {
+        if settingsWindow == nil {
+            let hosting = NSHostingController(rootView: SettingsView(settings: settings, hooks: hooks, engine: engine))
+            let window = NSWindow(contentViewController: hosting)
+            window.title = "DeskCat"
+            window.subtitle = "Settings"
+            window.styleMask = [.titled, .closable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.toolbarStyle = .unified
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let components = URLComponents(string: text) else { return }
+        if components.host == "settings" {
+            showSettings()
+            return
+        }
+        guard components.host == "agent" else { return }
+        let values = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap {
+            item in item.value.map { (item.name, $0) }
+        })
+        engine.handleAgentEvent(source: values["source"] ?? "agent",
+                                event: values["event"] ?? "",
+                                session: values["session"] ?? "default")
     }
     @objc private func quit() { NSApp.terminate(nil) }
 }
