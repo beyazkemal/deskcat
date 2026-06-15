@@ -90,6 +90,7 @@ NOTARY_PROFILE=DeskCatNotary ./Scripts/package-dmg.sh
 | 🫳 Kaldırma | Kediye tıklayıp sürükle — mochi gibi esner, sersemler |
 | 😾 Kuyruk çekme | Kuyruğuna tıklayıp çek — kuyruk uzar, kedi kısa süre kızar |
 | 🙆 Esneme | Zamanlayıcıyla veya "Stretch now" ile ayağa kalkıp esner |
+| 🐾 Tırmalama | "Scratch now" ile ön patilerini sırayla uzatır ve pençe izleri bırakır |
 | 🍅 Pomodoro | Focus ve mola süresini kedinin yanında gösterir |
 
 ## Menü çubuğu
@@ -97,6 +98,7 @@ NOTARY_PROFILE=DeskCatNotary ./Scripts/package-dmg.sh
 - **Hide / Show cat** — gizle / geri çağır
 - **Call it over** — kediyi imlecin olduğu tarafa yürüt
 - **Stretch now** — hemen esnetme
+- **Scratch now** — gerinerek tırmalama hareketini oynat
 - **Stretch reminder** — Kapalı / 20 / 30 / 60 dk
 - **Fur color** — Turuncu tekir / Gri / Krem / Smokin
 - **Enable keyboard reactions…** — Input Monitoring iznini ister/açar

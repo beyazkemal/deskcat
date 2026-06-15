@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum PetState: String {
-    case idle, look, pet, sleep, drag, stretch, walk
+    case idle, look, pet, sleep, drag, stretch, scratch, walk
     case type, overheat, tailPull, angry, scroll
     case thinking, celebrate, sad
 }
@@ -83,5 +83,6 @@ struct CatModel {
     var tailPullX: CGFloat = 0
     var tailPullY: CGFloat = 0
     var scrollAmount: CGFloat = 0
+    var scratchPhase: CGFloat = 0
     var palette: Palette = Palettes.orange
 }

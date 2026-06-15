@@ -47,6 +47,8 @@ final class PetEngine: ObservableObject {
     // actions
     private var walkTargetX: CGFloat?
     private var stretchUntil: Date?
+    private var scratchUntil: Date?
+    private var lastScratchStroke = -1
     private var angryUntil: Date?
     private var reminderTimer: Timer?
     private var scrollUntil: Date?
@@ -70,6 +72,7 @@ final class PetEngine: ObservableObject {
     private var pawTapL: CGFloat = 0, pawTapR: CGFloat = 0
     private var pawSide = false
     private var scrollAmount: CGFloat = 0
+    private var scratchPhase: CGFloat = 0
 
     // pomodoro
     private(set) var pomodoroRunning = false
@@ -82,6 +85,7 @@ final class PetEngine: ObservableObject {
     private var hearts: [Effect] = []
     private var zzz: [Effect] = []
     private var steam: [Effect] = []
+    private var scratches: [Effect] = []
 
     #if DEBUG
     private var debugTickCount = 0
@@ -132,6 +136,12 @@ final class PetEngine: ObservableObject {
 
     func triggerStretch() {
         stretchUntil = Date().addingTimeInterval(4.2)
+        onSchedulingChange?()
+    }
+
+    func triggerScratch() {
+        scratchUntil = Date().addingTimeInterval(3.8)
+        lastScratchStroke = -1
         onSchedulingChange?()
     }
 
@@ -302,6 +312,11 @@ final class PetEngine: ObservableObject {
         let t = now.timeIntervalSinceReferenceDate
         model.breathe = CGFloat(sin(t / 0.7)) * 0.8
         tailPhase += (state == .angry ? 0.2 : 0.07) * frameScale
+        if state == .scratch {
+            scratchPhase += 0.11 * frameScale
+        } else {
+            scratchPhase = 0
+        }
         // keyboard cooldown
         heat = max(0, heat - 0.006 * frameScale)
         pawTapL *= pow(0.72, frameScale)
@@ -368,6 +383,7 @@ final class PetEngine: ObservableObject {
         model.pawTapL = pawTapL; model.pawTapR = pawTapR
         model.heat = heat
         model.scrollAmount = scrollAmount
+        model.scratchPhase = scratchPhase
         bubbleText = bubbleText(for: state)
         timerText = pomodoroDisplayText(now: now)
         if pullingTail {
@@ -398,6 +414,7 @@ final class PetEngine: ObservableObject {
         if pullingTail { return .tailPull }
         if dragging { return .drag }
         if let cu = celebrateUntil, now < cu { return .celebrate }
+        if let sc = scratchUntil, now < sc { return .scratch }
         if let su = stretchUntil, now < su { return .stretch }
         if walkTargetX != nil { return .walk }
         if heat > 0.6 { return .overheat }
@@ -428,6 +445,17 @@ final class PetEngine: ObservableObject {
                                 y: feetViewY - 110, life: 1, vy: 0.8,
                                 vx: CGFloat.random(in: -0.2...0.2), sym: ""))
         }
+        if state == .scratch {
+            let stroke = Int(scratchPhase / .pi)
+            if stroke != lastScratchStroke {
+                lastScratchStroke = stroke
+                for side in [CGFloat(-1), CGFloat(1)] {
+                    scratches.append(Effect(x: Layout.PW / 2 + side * 19,
+                                            y: feetViewY - 23, life: 1, vy: 0,
+                                            vx: side, sym: ""))
+                }
+            }
+        }
         for i in hearts.indices.reversed() {
             hearts[i].y -= hearts[i].vy * frameScale; hearts[i].life -= 0.012 * frameScale
             if hearts[i].life <= 0 { hearts.remove(at: i) }
@@ -443,6 +471,10 @@ final class PetEngine: ObservableObject {
             steam[i].x += steam[i].vx * frameScale
             steam[i].life -= 0.025 * frameScale
             if steam[i].life <= 0 { steam.remove(at: i) }
+        }
+        for i in scratches.indices.reversed() {
+            scratches[i].life -= 0.018 * frameScale
+            if scratches[i].life <= 0 { scratches.remove(at: i) }
         }
     }
 
@@ -541,6 +573,7 @@ final class PetEngine: ObservableObject {
         case .celebrate: return "\(name): Bitti!"
         case .sad: return "\(name): Olmadı :("
         case .stretch: return "\(name): Biraz esneyelim!"
+        case .scratch: return "\(name): Tırmık tırmık!"
         default: return nil
         }
     }
@@ -570,6 +603,21 @@ final class PetEngine: ObservableObject {
             let r = 3 + (1 - s.life) * 7
             let rect = CGRect(x: s.x - r, y: s.y - r, width: r * 2, height: r * 2)
             context.fill(Path(ellipseIn: rect), with: .color(.white))
+        }
+        for scratch in scratches {
+            let age = 1 - scratch.life
+            let fadeIn = min(1, age / 0.22)
+            let fadeOut = min(1, scratch.life / 0.35)
+            context.opacity = max(0, Double(fadeIn * fadeOut)) * 0.95
+            var marks = Path()
+            for offset in [-6.0, -2.0, 2.0, 6.0] {
+                marks.move(to: CGPoint(x: scratch.x + offset - scratch.vx * 5, y: scratch.y - 10))
+                marks.addQuadCurve(
+                    to: CGPoint(x: scratch.x + offset + scratch.vx * 5, y: scratch.y + 10),
+                    control: CGPoint(x: scratch.x + offset - scratch.vx * 2, y: scratch.y + 1))
+            }
+            context.stroke(marks, with: .color(Color(hex: "#7D3E2B")),
+                           style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
         }
         context.opacity = 1
     }

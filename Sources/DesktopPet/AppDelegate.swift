@@ -219,6 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let stretch = NSMenuItem(title: "Stretch now", action: #selector(stretchNow), keyEquivalent: "")
         stretch.target = self
         menu.addItem(stretch)
+        let scratch = NSMenuItem(title: "Scratch now", action: #selector(scratchNow), keyEquivalent: "")
+        scratch.target = self
+        menu.addItem(scratch)
 
         menu.addItem(.separator())
 
@@ -264,6 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func callOver() { engine.callOver() }
     @objc private func stretchNow() { engine.triggerStretch() }
+    @objc private func scratchNow() { engine.triggerScratch() }
     @objc private func togglePomodoro() {
         engine.togglePomodoro()
         rebuildMenu()

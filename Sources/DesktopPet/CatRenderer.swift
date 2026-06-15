@@ -32,6 +32,7 @@ enum CatRenderer {
         case .sleep: pose = "sleep"; eye = "sleep"
         case .drag: eye = "dizzy"
         case .stretch: pose = "stretch"; eye = "happy"
+        case .scratch: pose = "scratch"; eye = "scratch"
         case .scroll: pose = "sit"; eye = "happy"
         case .type, .thinking: pose = "sit"; eye = "open"
         case .overheat: pose = "sit"; eye = "strain"
@@ -45,6 +46,7 @@ enum CatRenderer {
         var headCY: CGFloat, headR: CGFloat
         switch pose {
         case "stretch": bodyCY = 46; bodyRX = 12; bodyRY = 20 + breathe; headCY = 17; headR = 13
+        case "scratch": bodyCY = 50; bodyRX = 15; bodyRY = 16 + breathe; headCY = 29; headR = 15
         case "crouch":  bodyCY = 54; bodyRX = 18; bodyRY = 12 + breathe; headCY = 36; headR = 14
         case "sleep":   bodyCY = 56; bodyRX = 20; bodyRY = 12 + breathe; headCY = 47; headR = 13
         default:        bodyCY = 50; bodyRX = 15; bodyRY = 16 + breathe; headCY = 29; headR = 15
@@ -98,6 +100,20 @@ enum CatRenderer {
             c.stroke(arms, with: .color(P.base), style: StrokeStyle(lineWidth: 5, lineCap: .round))
             el(&c, CX - 10, 15, 3, 3, fill: P.belly, stroke: P.outline, lw: 1.2)
             el(&c, CX + 10, 15, 3, 3, fill: P.belly, stroke: P.outline, lw: 1.2)
+            el(&c, CX - 6, BASEY, 4.5, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+            el(&c, CX + 6, BASEY, 4.5, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
+        } else if pose == "scratch" {
+            let stroke = CGFloat((sin(Double(m.scratchPhase)) + 1) * 0.5)
+            var arms = Path()
+            arms.move(to: CGPoint(x: CX - 9, y: 42))
+            arms.addLine(to: CGPoint(x: CX - 12, y: 47 + stroke * 6))
+            arms.move(to: CGPoint(x: CX + 9, y: 42))
+            arms.addLine(to: CGPoint(x: CX + 12, y: 47 + stroke * 6))
+            c.stroke(arms, with: .color(P.base), style: StrokeStyle(lineWidth: 6, lineCap: .round))
+            el(&c, CX - 12, 47 + stroke * 6, 4.2, 4.5, fill: P.belly, stroke: P.outline, lw: 1.3)
+            el(&c, CX + 12, 47 + stroke * 6, 4.2, 4.5, fill: P.belly, stroke: P.outline, lw: 1.3)
+            drawClaws(&c, x: CX - 12, y: 50 + stroke * 6, color: P.outline)
+            drawClaws(&c, x: CX + 12, y: 50 + stroke * 6, color: P.outline)
             el(&c, CX - 6, BASEY, 4.5, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
             el(&c, CX + 6, BASEY, 4.5, 3.5, fill: P.belly, stroke: P.outline, lw: 1.2)
         } else if pose == "sleep" {
@@ -202,6 +218,16 @@ enum CatRenderer {
         curl.addArc(center: CGPoint(x: rollX, y: rollY), radius: 4.8,
                     startAngle: spin, endAngle: spin + .degrees(115), clockwise: false)
         c.stroke(curl, with: .color(shadow), lineWidth: 0.8)
+    }
+
+    private static func drawClaws(_ c: inout GraphicsContext, x: CGFloat, y: CGFloat, color: Color) {
+        var claws = Path()
+        for offset in [-1.8, 0, 1.8] {
+            claws.move(to: CGPoint(x: x + offset, y: y - 1))
+            claws.addLine(to: CGPoint(x: x + offset, y: y + 2.5))
+        }
+        c.stroke(claws, with: .color(color),
+                 style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
     }
 
     private static func drawHead(_ c: inout GraphicsContext, _ P: Palette,
@@ -353,6 +379,16 @@ enum CatRenderer {
             a.addLine(to: CGPoint(x: x, y: y - 1.4))
             a.addLine(to: CGPoint(x: x + 2.4, y: y + 1.6))
             c.stroke(a, with: .color(P.outline), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            return
+        case "scratch":
+            var a = Path()
+            let innerDirection: CGFloat = x < CX ? 1 : -1
+            a.move(to: CGPoint(x: x - 2.8, y: y - innerDirection * 0.5))
+            a.addLine(to: CGPoint(x: x + 2.8, y: y + innerDirection * 0.5))
+            a.move(to: CGPoint(x: x - 2.2, y: y + 2.1))
+            a.addLine(to: CGPoint(x: x + 2.2, y: y + 2.1))
+            c.stroke(a, with: .color(P.outline),
+                     style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
             return
         case "angry":
             var a = Path()
